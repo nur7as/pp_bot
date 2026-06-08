@@ -8,9 +8,11 @@ from aiogram.filters import CommandStart, Command
 from aiogram.types import (
     Message, CallbackQuery,
     InlineKeyboardMarkup, InlineKeyboardButton,
-    ContentType, InputMediaPhoto
+    ContentType, InputMediaPhoto, FSInputFile
 )
 from aiogram.fsm.storage.memory import MemoryStorage
+from aiogram.fsm.context import FSMContext
+from aiogram.fsm.state import State, StatesGroup
 
 from database import Database
 
@@ -24,15 +26,16 @@ CARD_NUM   = "5269 8800 1480 4728"
 CARD_NAME  = "Нуртас И."
 ADMIN_USER = "@nurtas_issabek"
 
-# Скриншоты канала (file_id заполнится при первом запуске)
-# Пока используем прямые ссылки — после первого запуска замените на file_id
-CHANNEL_PHOTOS = os.getenv("CHANNEL_PHOTOS", "").split(",") if os.getenv("CHANNEL_PHOTOS") else []
-
 logging.basicConfig(level=logging.INFO)
 
 bot = Bot(token=BOT_TOKEN)
 dp  = Dispatcher(storage=MemoryStorage())
 db  = Database("subscribers.db")
+
+
+# ─── STATES ───────────────────────────────────────────────────────────────────
+class WaitingName(StatesGroup):
+    waiting_for_name = State()
 
 
 # ─── KEYBOARDS ────────────────────────────────────────────────────────────────
@@ -91,7 +94,7 @@ ABOUT_TEXT = (
 BUY_TEXT = (
     "💳 <b>Төлем жасау — 7 000 ₸</b>\n\n"
     "<b>1-нұсқа — Kaspi Pay:</b>\n"
-    f"🔗 <a href='{{kaspi}}'>Kaspi Pay арқылы төлеу →</a>\n\n"
+    "🔗 <a href='{kaspi}'>Kaspi Pay арқылы төлеу →</a>\n\n"
     "<b>2-нұсқа — Басқа банк арқылы:</b>\n"
     f"<code>{CARD_NUM}</code>\n"
     f"{CARD_NAME}\n\n"
@@ -99,28 +102,40 @@ BUY_TEXT = (
     "⏱ Скриншотты жібергеннен кейін <b>5-15 минут ішінде</b> каналға сілтеме келеді!"
 )
 
-APPROVE_TEXT = (
-    "🎉 <b>Төлеміңіз қабылданды! Рахмет сізге!</b>\n\n"
-    "Каналға кіру үшін төмендегі жеке сілтемеңізге өтіңіз:\n"
-    "👇 {link}\n\n"
-    "⚠️ Бұл сілтеме тек сіз үшін және бір рет қана жұмыс істейді!\n\n"
-    "Каналда сізді көргенімізге қуаныштымыз 🥗\n"
-    f"Сұрақтарыңыз болса — {ADMIN_USER}-ке жазыңыз!"
-)
 
-REJECT_TEXT = (
-    "❌ <b>Скриншот қабылданбады.</b>\n\n"
-    "Себептері:\n"
-    "• Скриншот анық емес\n"
-    "• Сомасы дұрыс емес\n"
-    "• Төлем расталмады\n\n"
-    f"Қайта төлеп, скриншот жіберіңіз немесе {ADMIN_USER}-ке хабарласыңыз."
-)
+# ─── STARTUP: загрузка фото ───────────────────────────────────────────────────
+PHOTO_IDS = []
+
+async def upload_photos():
+    global PHOTO_IDS
+    stored = db.get_setting("photo_ids")
+    if stored:
+        PHOTO_IDS = stored.split(",")
+        logging.info(f"Loaded {len(PHOTO_IDS)} photo IDs from DB")
+        return
+
+    photo_files = ["photo1.png", "photo2.png", "photo3.png"]
+    ids = []
+    for fname in photo_files:
+        if os.path.exists(fname):
+            msg = await bot.send_photo(
+                chat_id=ADMIN_ID,
+                photo=FSInputFile(fname),
+                caption=f"📸 Фото жүктелді: {fname}"
+            )
+            ids.append(msg.photo[-1].file_id)
+            logging.info(f"Uploaded {fname}")
+
+    if ids:
+        PHOTO_IDS = ids
+        db.save_setting("photo_ids", ",".join(ids))
+        await bot.send_message(ADMIN_ID, f"✅ {len(ids)} сурет сәтті жүктелді!")
 
 
 # ─── /start ───────────────────────────────────────────────────────────────────
 @dp.message(CommandStart())
-async def cmd_start(message: Message):
+async def cmd_start(message: Message, state: FSMContext):
+    await state.clear()
     await message.answer(
         text=START_TEXT,
         parse_mode="HTML",
@@ -130,7 +145,8 @@ async def cmd_start(message: Message):
 
 # ─── BACK TO START ────────────────────────────────────────────────────────────
 @dp.callback_query(F.data == "start")
-async def cb_back(call: CallbackQuery):
+async def cb_back(call: CallbackQuery, state: FSMContext):
+    await state.clear()
     await call.message.delete()
     await call.message.answer(
         text=START_TEXT,
@@ -145,11 +161,10 @@ async def cb_back(call: CallbackQuery):
 async def cb_about(call: CallbackQuery):
     await call.message.delete()
 
-    # Отправляем скриншоты канала если есть
-    if CHANNEL_PHOTOS and CHANNEL_PHOTOS[0]:
-        media = [InputMediaPhoto(media=photo_id) for photo_id in CHANNEL_PHOTOS if photo_id]
-        if media:
-            await call.message.answer_media_group(media=media)
+    if PHOTO_IDS:
+        from aiogram.types import InputMediaPhoto as IMP
+        media = [IMP(media=pid) for pid in PHOTO_IDS]
+        await call.message.answer_media_group(media=media)
 
     await call.message.answer(
         text=ABOUT_TEXT,
@@ -161,7 +176,7 @@ async def cb_about(call: CallbackQuery):
 
 # ─── BUY ──────────────────────────────────────────────────────────────────────
 @dp.callback_query(F.data == "buy")
-async def cb_buy(call: CallbackQuery):
+async def cb_buy(call: CallbackQuery, state: FSMContext):
     if db.is_subscriber(call.from_user.id):
         await call.answer("✅ Сіз бұрыннан мүшесіз!", show_alert=True)
         return
@@ -178,8 +193,14 @@ async def cb_buy(call: CallbackQuery):
 
 # ─── SCREENSHOT ───────────────────────────────────────────────────────────────
 @dp.message(F.content_type == ContentType.PHOTO)
-async def handle_screenshot(message: Message):
+async def handle_screenshot(message: Message, state: FSMContext):
     user = message.from_user
+    current_state = await state.get_state()
+
+    # Если ждём имя — игнорируем фото
+    if current_state == WaitingName.waiting_for_name:
+        await message.answer("✏️ Алдымен аты-жөніңізді жазыңыз.")
+        return
 
     if db.is_subscriber(user.id):
         await message.answer("✅ Сіз бұрыннан мүшесіз!")
@@ -191,7 +212,7 @@ async def handle_screenshot(message: Message):
 
     db.add_pending(user.id)
 
-    username = f"@{user.username}" if user.username else f"id:{user.id}"
+    username = f"@{user.username}" if user.username else "жоқ"
     name = f"{user.first_name or ''} {user.last_name or ''}".strip()
 
     await bot.send_photo(
@@ -225,6 +246,40 @@ async def cb_approve(call: CallbackQuery):
 
     user_id = int(call.data.split(":")[1])
 
+    # Сохраняем pending approval и просим имя
+    db.save_setting(f"pending_approve_{user_id}", "1")
+
+    await bot.send_message(
+        chat_id=user_id,
+        text=(
+            "✅ <b>Төлеміңіз расталды!</b>\n\n"
+            "Каналға қосу үшін аты-жөніңізді жазыңыз 👇\n"
+            "<i>(Мысалы: Айгерім Сейткали)</i>"
+        ),
+        parse_mode="HTML"
+    )
+
+    await call.message.edit_caption(
+        caption=call.message.caption + "\n\n⏳ <b>Аты-жөн күтілуде...</b>",
+        parse_mode="HTML"
+    )
+    await call.answer("✅ Клиентке хабарлама жіберілді!")
+
+
+# ─── WAITING FOR NAME ─────────────────────────────────────────────────────────
+@dp.message(F.text & ~F.text.startswith("/"))
+async def handle_text(message: Message, state: FSMContext):
+    user = message.from_user
+    user_id = user.id
+
+    # Проверяем — ждём ли имя от этого пользователя
+    pending = db.get_setting(f"pending_approve_{user_id}")
+    if not pending:
+        return
+
+    full_name = message.text.strip()
+    username = f"@{user.username}" if user.username else "жоқ"
+
     try:
         link = await bot.create_chat_invite_link(
             chat_id=CHANNEL_ID,
@@ -232,24 +287,34 @@ async def cb_approve(call: CallbackQuery):
             name=f"user_{user_id}"
         )
 
-        db.add_subscriber(user_id)
+        db.add_subscriber_with_name(user_id, full_name, username)
         db.remove_pending(user_id)
+        db.delete_setting(f"pending_approve_{user_id}")
 
-        await bot.send_message(
-            chat_id=user_id,
-            text=APPROVE_TEXT.format(link=link.invite_link),
+        await message.answer(
+            f"🎉 <b>Төлеміңіз қабылданды! Рахмет сізге!</b>\n\n"
+            f"Каналға кіру үшін төмендегі жеке сілтемеңізге өтіңіз:\n"
+            f"👇 {link.invite_link}\n\n"
+            f"⚠️ Бұл сілтеме тек сіз үшін және бір рет қана жұмыс істейді!\n\n"
+            f"Каналда сізді көргенімізге қуаныштымыз 🥗\n"
+            f"Сұрақтарыңыз болса — {ADMIN_USER}-ке жазыңыз!",
             parse_mode="HTML"
         )
 
-        await call.message.edit_caption(
-            caption=call.message.caption + "\n\n✅ <b>ОДОБРЕНО</b> — сілтеме жіберілді",
+        # Уведомляем админа
+        await bot.send_message(
+            chat_id=ADMIN_ID,
+            text=(
+                f"✅ <b>Қосылды!</b>\n\n"
+                f"👤 Аты-жөні: <b>{full_name}</b>\n"
+                f"📱 Username: {username}\n"
+                f"🆔 ID: <code>{user_id}</code>"
+            ),
             parse_mode="HTML"
         )
 
     except Exception as e:
-        await call.message.answer(f"❌ Қате: {e}")
-
-    await call.answer("✅ Одобрено!")
+        await message.answer(f"❌ Қате болды: {e}")
 
 
 # ─── REJECT ───────────────────────────────────────────────────────────────────
@@ -261,10 +326,18 @@ async def cb_reject(call: CallbackQuery):
 
     user_id = int(call.data.split(":")[1])
     db.remove_pending(user_id)
+    db.delete_setting(f"pending_approve_{user_id}")
 
     await bot.send_message(
         chat_id=user_id,
-        text=REJECT_TEXT,
+        text=(
+            "❌ <b>Скриншот қабылданбады.</b>\n\n"
+            "Себептері:\n"
+            "• Скриншот анық емес\n"
+            "• Сомасы дұрыс емес\n"
+            "• Төлем расталмады\n\n"
+            f"Қайта төлеп, скриншот жіберіңіз немесе {ADMIN_USER}-ке хабарласыңыз."
+        ),
         parse_mode="HTML"
     )
 
@@ -273,28 +346,6 @@ async def cb_reject(call: CallbackQuery):
         parse_mode="HTML"
     )
     await call.answer("❌ Отклонено")
-
-
-# ─── /getid (admin only) ─────────────────────────────────────────────────────
-@dp.message(Command("getid"))
-async def cmd_getid(message: Message):
-    if message.from_user.id != ADMIN_ID:
-        return
-    await message.answer(
-        "📸 Енді маған сурет жібер — мен оның file_id-ін көрсетемін.\n"
-        "3 суретті бірінен соң бірін жібер."
-    )
-
-
-@dp.message(F.photo & F.from_user.id == ADMIN_ID & F.text.is_(None))
-async def get_photo_id(message: Message):
-    # Показываем file_id только если последняя команда была /getid
-    file_id = message.photo[-1].file_id
-    await message.answer(
-        f"✅ File ID:\n<code>{file_id}</code>\n\n"
-        f"Осыны көшіріп, Railway-дегі CHANNEL_PHOTOS-қа қос.",
-        parse_mode="HTML"
-    )
 
 
 # ─── /users (admin only) ──────────────────────────────────────────────────────
@@ -311,7 +362,10 @@ async def cmd_users(message: Message):
 
     text = f"👥 <b>Барлық мүшелер: {len(subscribers)}</b>\n\n"
     for i, sub in enumerate(subscribers, 1):
-        text += f"{i}. ID: <code>{sub['user_id']}</code> — {sub['added_at']}\n"
+        name = sub.get('full_name') or '—'
+        username = sub.get('username') or '—'
+        date = sub.get('added_at', '')
+        text += f"{i}. <b>{name}</b> | {username} | {date}\n"
 
     await message.answer(text, parse_mode="HTML")
 
@@ -337,6 +391,7 @@ async def cmd_stats(message: Message):
 
 # ─── MAIN ─────────────────────────────────────────────────────────────────────
 async def main():
+    await upload_photos()
     await dp.start_polling(bot)
 
 if __name__ == "__main__":
