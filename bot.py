@@ -275,6 +275,28 @@ async def cb_reject(call: CallbackQuery):
     await call.answer("❌ Отклонено")
 
 
+# ─── /getid (admin only) ─────────────────────────────────────────────────────
+@dp.message(Command("getid"))
+async def cmd_getid(message: Message):
+    if message.from_user.id != ADMIN_ID:
+        return
+    await message.answer(
+        "📸 Енді маған сурет жібер — мен оның file_id-ін көрсетемін.\n"
+        "3 суретті бірінен соң бірін жібер."
+    )
+
+
+@dp.message(F.photo & F.from_user.id == ADMIN_ID & F.text.is_(None))
+async def get_photo_id(message: Message):
+    # Показываем file_id только если последняя команда была /getid
+    file_id = message.photo[-1].file_id
+    await message.answer(
+        f"✅ File ID:\n<code>{file_id}</code>\n\n"
+        f"Осыны көшіріп, Railway-дегі CHANNEL_PHOTOS-қа қос.",
+        parse_mode="HTML"
+    )
+
+
 # ─── /users (admin only) ──────────────────────────────────────────────────────
 @dp.message(Command("users"))
 async def cmd_users(message: Message):
