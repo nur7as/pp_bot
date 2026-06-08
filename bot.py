@@ -8,18 +8,25 @@ from aiogram.filters import CommandStart, Command
 from aiogram.types import (
     Message, CallbackQuery,
     InlineKeyboardMarkup, InlineKeyboardButton,
-    ContentType
+    ContentType, InputMediaPhoto
 )
 from aiogram.fsm.storage.memory import MemoryStorage
 
 from database import Database
 
 # ─── CONFIG ───────────────────────────────────────────────────────────────────
-BOT_TOKEN   = os.getenv("BOT_TOKEN")
-ADMIN_ID    = int(os.getenv("ADMIN_ID", "0"))        # числовой ID админа
-CHANNEL_ID  = int(os.getenv("CHANNEL_ID", "0"))      # -1001003358660639
-KASPI_LINK  = os.getenv("KASPI_LINK", "")
-PRICE       = 7000
+BOT_TOKEN  = os.getenv("BOT_TOKEN")
+ADMIN_ID   = int(os.getenv("ADMIN_ID", "0"))
+CHANNEL_ID = int(os.getenv("CHANNEL_ID", "0"))
+KASPI_LINK = os.getenv("KASPI_LINK", "")
+PRICE      = 7000
+CARD_NUM   = "5269 8800 1480 4728"
+CARD_NAME  = "Нуртас И."
+ADMIN_USER = "@nurtas_issabek"
+
+# Скриншоты канала (file_id заполнится при первом запуске)
+# Пока используем прямые ссылки — после первого запуска замените на file_id
+CHANNEL_PHOTOS = os.getenv("CHANNEL_PHOTOS", "").split(",") if os.getenv("CHANNEL_PHOTOS") else []
 
 logging.basicConfig(level=logging.INFO)
 
@@ -31,8 +38,14 @@ db  = Database("subscribers.db")
 # ─── KEYBOARDS ────────────────────────────────────────────────────────────────
 def kb_main():
     return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="🛒 Купить доступ — 7 000 ₸", callback_data="buy")],
-        [InlineKeyboardButton(text="❓ Что внутри канала?",       callback_data="about")],
+        [InlineKeyboardButton(text="💳 Төлем жасау — 7 000 ₸", callback_data="buy")],
+        [InlineKeyboardButton(text="🥗 Канал ішінде не бар?",   callback_data="about")],
+    ])
+
+def kb_about():
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="💳 Төлем жасау — 7 000 ₸", callback_data="buy")],
+        [InlineKeyboardButton(text="◀️ Артқа",                  callback_data="start")],
     ])
 
 def kb_paid(user_id: int):
@@ -43,70 +56,105 @@ def kb_paid(user_id: int):
 
 def kb_cancel():
     return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="◀️ Назад", callback_data="start")],
+        [InlineKeyboardButton(text="◀️ Артқа", callback_data="start")],
     ])
+
+
+# ─── TEXTS ────────────────────────────────────────────────────────────────────
+START_TEXT = (
+    "Сәлеметсіз бе 🤗\n\n"
+    "Cізді өзімнің дайын күндік/апталық/айлық рацион мен пайдалы тамақтар рецепті сақталған каналыма шақырамын 🥗\n\n"
+    "<b>КАНАЛ КІМГЕ АРНАЛҒАН?</b>\n"
+    "• Артық салмақтан сапалы түрде \"срыв\" болмай арылғысы келетіндерге\n"
+    "• Дұрыс, КБЖУ балансын сақтап тамақтанғысы келетіндерге\n"
+    "• Уақытыңызды алмайтын, ақшаңыз артық жұмсалмайтын дайын, дәмді әрі пайдалы тағамдардың тұруын қалайтындарға\n"
+    "• Дұрыс салмақ қосқысы келетіндерге\n\n"
+    "✅ Каналда дайын рациондар рецепттері мен видео обзорлары, КБЖУ, пайдалы ақпараттар бар\n\n"
+    "💫 Канал сізде <b>шексіз</b> қалады — бір рет төлейсіз, мәңгі пайдаланасыз\n\n"
+    "<b>Бағасы: 7 000 ₸</b>\n\n"
+    "👇 Төменде таңдаңыз"
+)
+
+ABOUT_TEXT = (
+    "<b>Каналда не бар? 🥗</b>\n\n"
+    "💪🏻 КБЖУ және калория дефициті/профициті — қалай есептейміз, салмақ тастауға/қосуға қалай пайдаланамыз\n\n"
+    "🍽 Күннің 3 уақытына арналған дайын рациондар — қолжетімді өнімдерден, рецептімен және видео обзормен\n\n"
+    "🧇 ПП тәттілер рецепттері — дәмді, бірақ пайдалы\n\n"
+    "🛒 Апталық/айлық азық-түліктер тізімі — не алу керек, қалай жоспарлау керек\n\n"
+    "✔️ Әр рецепттің толық есептелген КБЖУ\n\n"
+    "💡 Қосымша: пайдалы ақпараттар, лайфхактар, жаттығулар тізімі\n\n"
+    "━━━━━━━━━━━━━━━\n"
+    "💫 Бір рет төлейсіз — шексіз қол жеткізу\n"
+    "<b>Бағасы: 7 000 ₸</b>"
+)
+
+BUY_TEXT = (
+    "💳 <b>Төлем жасау — 7 000 ₸</b>\n\n"
+    "<b>1-нұсқа — Kaspi Pay:</b>\n"
+    f"🔗 <a href='{{kaspi}}'>Kaspi Pay арқылы төлеу →</a>\n\n"
+    "<b>2-нұсқа — Басқа банк арқылы:</b>\n"
+    f"<code>{CARD_NUM}</code>\n"
+    f"{CARD_NAME}\n\n"
+    "📸 Төлегеннен кейін скриншотты осы ботқа жіберіңіз\n\n"
+    "⏱ Скриншотты жібергеннен кейін <b>5-15 минут ішінде</b> каналға сілтеме келеді!"
+)
+
+APPROVE_TEXT = (
+    "🎉 <b>Төлеміңіз қабылданды! Рахмет сізге!</b>\n\n"
+    "Каналға кіру үшін төмендегі жеке сілтемеңізге өтіңіз:\n"
+    "👇 {link}\n\n"
+    "⚠️ Бұл сілтеме тек сіз үшін және бір рет қана жұмыс істейді!\n\n"
+    "Каналда сізді көргенімізге қуаныштымыз 🥗\n"
+    f"Сұрақтарыңыз болса — {ADMIN_USER}-ке жазыңыз!"
+)
+
+REJECT_TEXT = (
+    "❌ <b>Скриншот қабылданбады.</b>\n\n"
+    "Себептері:\n"
+    "• Скриншот анық емес\n"
+    "• Сомасы дұрыс емес\n"
+    "• Төлем расталмады\n\n"
+    f"Қайта төлеп, скриншот жіберіңіз немесе {ADMIN_USER}-ке хабарласыңыз."
+)
 
 
 # ─── /start ───────────────────────────────────────────────────────────────────
 @dp.message(CommandStart())
 async def cmd_start(message: Message):
-    await message.answer_photo(
-        photo="https://i.imgur.com/placeholder.jpg",   # замени на свою фотографию
-        caption=(
-            "👋 Сәлем! Мен — <b>ПП Рецепты</b> каналының боты.\n\n"
-            "🥗 Біздің каналда:\n"
-            "• Дәмді және пайдалы рецепттер\n"
-            "• Арықтауға арналған тамақтану жоспары\n"
-            "• Перизаттың жеке кеңестері\n"
-            "• Жаңа рецепттер апта сайын\n\n"
-            f"💳 Баға: <b>{PRICE:,} ₸</b> — <b>мәңгілік қол жеткізу</b>\n\n"
-            "Төменде таңдаңыз 👇"
-        ),
+    await message.answer(
+        text=START_TEXT,
         parse_mode="HTML",
         reply_markup=kb_main()
     )
-
-
-# ─── ABOUT ────────────────────────────────────────────────────────────────────
-@dp.callback_query(F.data == "about")
-async def cb_about(call: CallbackQuery):
-    await call.message.edit_caption(
-        caption=(
-            "📖 <b>Каналда не бар?</b>\n\n"
-            "✅ 200+ ПП рецепт (с КБЖУ)\n"
-            "✅ Апта сайын жаңа рецепттер\n"
-            "✅ Нәтижелі арықтау жоспары\n"
-            "✅ Перизаттың жеке кеңестері\n"
-            "✅ Жауаптар мен сұрақтарға қолдау\n\n"
-            "👥 Каналда 1000+ белсенді мүше\n\n"
-            f"💳 Бір рет төлейсің — <b>мәңгілік қол жеткізу</b>\n"
-            f"Баға: <b>{PRICE:,} ₸</b>"
-        ),
-        parse_mode="HTML",
-        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="🛒 Сатып алу", callback_data="buy")],
-            [InlineKeyboardButton(text="◀️ Артқа",     callback_data="start")],
-        ])
-    )
-    await call.answer()
 
 
 # ─── BACK TO START ────────────────────────────────────────────────────────────
 @dp.callback_query(F.data == "start")
 async def cb_back(call: CallbackQuery):
-    await call.message.edit_caption(
-        caption=(
-            "👋 Сәлем! Мен — <b>ПП Рецепты</b> каналының боты.\n\n"
-            "🥗 Біздің каналда:\n"
-            "• Дәмді және пайдалы рецепттер\n"
-            "• Арықтауға арналған тамақтану жоспары\n"
-            "• Перизаттың жеке кеңестері\n"
-            "• Жаңа рецепттер апта сайын\n\n"
-            f"💳 Баға: <b>{PRICE:,} ₸</b> — <b>мәңгілік қол жеткізу</b>\n\n"
-            "Төменде таңдаңыз 👇"
-        ),
+    await call.message.delete()
+    await call.message.answer(
+        text=START_TEXT,
         parse_mode="HTML",
         reply_markup=kb_main()
+    )
+    await call.answer()
+
+
+# ─── ABOUT ────────────────────────────────────────────────────────────────────
+@dp.callback_query(F.data == "about")
+async def cb_about(call: CallbackQuery):
+    await call.message.delete()
+
+    # Отправляем скриншоты канала если есть
+    if CHANNEL_PHOTOS and CHANNEL_PHOTOS[0]:
+        media = [InputMediaPhoto(media=photo_id) for photo_id in CHANNEL_PHOTOS if photo_id]
+        if media:
+            await call.message.answer_media_group(media=media)
+
+    await call.message.answer(
+        text=ABOUT_TEXT,
+        parse_mode="HTML",
+        reply_markup=kb_about()
     )
     await call.answer()
 
@@ -114,22 +162,16 @@ async def cb_back(call: CallbackQuery):
 # ─── BUY ──────────────────────────────────────────────────────────────────────
 @dp.callback_query(F.data == "buy")
 async def cb_buy(call: CallbackQuery):
-    # проверить — уже подписчик?
     if db.is_subscriber(call.from_user.id):
         await call.answer("✅ Сіз бұрыннан мүшесіз!", show_alert=True)
         return
 
-    await call.message.edit_caption(
-        caption=(
-            "💳 <b>Төлем жасау:</b>\n\n"
-            f"1️⃣ Төмендегі Kaspi Pay сілтемесіне өтіңіз\n"
-            f"2️⃣ <b>{PRICE:,} ₸</b> төлеңіз\n"
-            f"3️⃣ Төлем скриншотын осы ботқа жіберіңіз\n\n"
-            f"🔗 <a href='{KASPI_LINK}'>Kaspi Pay арқылы төлеу →</a>\n\n"
-            "📸 Төлегеннен кейін скриншотты осы чатқа жіберіңіз"
-        ),
+    await call.message.delete()
+    await call.message.answer(
+        text=BUY_TEXT.format(kaspi=KASPI_LINK),
         parse_mode="HTML",
-        reply_markup=kb_cancel()
+        reply_markup=kb_cancel(),
+        disable_web_page_preview=True
     )
     await call.answer()
 
@@ -152,7 +194,6 @@ async def handle_screenshot(message: Message):
     username = f"@{user.username}" if user.username else f"id:{user.id}"
     name = f"{user.first_name or ''} {user.last_name or ''}".strip()
 
-    # Уведомление админу
     await bot.send_photo(
         chat_id=ADMIN_ID,
         photo=message.photo[-1].file_id,
@@ -185,7 +226,6 @@ async def cb_approve(call: CallbackQuery):
     user_id = int(call.data.split(":")[1])
 
     try:
-        # Генерируем одноразовую invite-ссылку
         link = await bot.create_chat_invite_link(
             chat_id=CHANNEL_ID,
             member_limit=1,
@@ -195,22 +235,14 @@ async def cb_approve(call: CallbackQuery):
         db.add_subscriber(user_id)
         db.remove_pending(user_id)
 
-        # Отправляем ссылку клиенту
         await bot.send_message(
             chat_id=user_id,
-            text=(
-                "🎉 <b>Төлеміңіз қабылданды!</b>\n\n"
-                "Төмендегі сілтеме арқылы каналға кіріңіз:\n"
-                f"👇 {link.invite_link}\n\n"
-                "⚠️ Бұл сілтеме бір рет қана жұмыс істейді — тек сіз үшін!\n\n"
-                "Қош келдіңіз! 🥗"
-            ),
+            text=APPROVE_TEXT.format(link=link.invite_link),
             parse_mode="HTML"
         )
 
-        # Обновляем сообщение у админа
         await call.message.edit_caption(
-            caption=call.message.caption + f"\n\n✅ <b>ОДОБРЕНО</b> — сілтеме жіберілді",
+            caption=call.message.caption + "\n\n✅ <b>ОДОБРЕНО</b> — сілтеме жіберілді",
             parse_mode="HTML"
         )
 
@@ -232,14 +264,7 @@ async def cb_reject(call: CallbackQuery):
 
     await bot.send_message(
         chat_id=user_id,
-        text=(
-            "❌ <b>Скриншот қабылданбады.</b>\n\n"
-            "Себептері:\n"
-            "• Скриншот анық емес\n"
-            "• Сомасы дұрыс емес\n"
-            "• Төлем расталмады\n\n"
-            "Қайта төлеп, скриншот жіберіңіз немесе @nurtas_issabek-ке хабарласыңыз."
-        ),
+        text=REJECT_TEXT,
         parse_mode="HTML"
     )
 
